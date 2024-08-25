@@ -29,7 +29,7 @@
 #include <zephyr/bluetooth/services/dis.h>
 #include <dk_buttons_and_leds.h>
 
-#include "app_nfc.h"
+#include <zephyr/input/input_kbd_matrix.h>
 
 #define DEVICE_NAME     CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -191,34 +191,6 @@ static void advertising_start(void)
 	is_adv = true;
 	printk("Advertising successfully started\n");
 }
-
-
-#if CONFIG_NFC_OOB_PAIRING
-static void delayed_advertising_start(struct k_work *work)
-{
-	advertising_start();
-}
-
-
-void nfc_field_detected(void)
-{
-	dk_set_led_on(NFC_LED);
-
-	for (int i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
-		if (!conn_mode[i].conn) {
-			k_work_submit(&adv_work);
-			break;
-		}
-	}
-}
-
-
-void nfc_field_lost(void)
-{
-	dk_set_led_off(NFC_LED);
-}
-#endif
-
 
 static void pairing_process(struct k_work *work)
 {
@@ -555,36 +527,6 @@ static void auth_cancel(struct bt_conn *conn)
 }
 
 
-#if CONFIG_NFC_OOB_PAIRING
-static void auth_oob_data_request(struct bt_conn *conn,
-				  struct bt_conn_oob_info *info)
-{
-	int err;
-	struct bt_le_oob *oob_local = app_nfc_oob_data_get();
-
-	printk("LESC OOB data requested\n");
-
-	if (info->type != BT_CONN_OOB_LE_SC) {
-		printk("Only LESC pairing supported\n");
-		return;
-	}
-
-	if (info->lesc.oob_config != BT_CONN_OOB_LOCAL_ONLY) {
-		printk("LESC OOB config not supported\n");
-		return;
-	}
-
-	/* Pass only local OOB data. */
-	err = bt_le_oob_set_sc_data(conn, &oob_local->le_sc_data, NULL);
-	if (err) {
-		printk("Error while setting OOB data: %d\n", err);
-	} else {
-		printk("Successfully provided LESC OOB data\n");
-	}
-}
-#endif
-
-
 static void pairing_complete(struct bt_conn *conn, bool bonded)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
@@ -851,7 +793,10 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 {
 	static bool pairing_button_pressed;
 
-	uint32_t buttons = button_state & has_changed;
+	uint32_t buttons = (~button_state) & has_changed;
+
+	printk("buttons: 0x%x\r\n", button_state);
+	printk("changed: 0x%x\r\n", has_changed);
 
 	if (k_msgq_num_used_get(&mitm_queue)) {
 		if (buttons & KEY_PAIRING_ACCEPT) {
@@ -883,21 +828,6 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 	if (has_changed & KEY_SHIFT_MASK) {
 		button_shift_changed((button_state & KEY_SHIFT_MASK) != 0);
 	}
-#if CONFIG_NFC_OOB_PAIRING
-	if (has_changed & KEY_ADV_MASK) {
-		size_t i;
-
-		for (i = 0; i < CONFIG_BT_HIDS_MAX_CLIENT_COUNT; i++) {
-			if (!conn_mode[i].conn) {
-				advertising_start();
-				return;
-			}
-		}
-
-		printk("Cannot start advertising, all connections slots are"
-		       " taken\n");
-	}
-#endif
 }
 
 
@@ -930,6 +860,10 @@ static void bas_notify(void)
 	bt_bas_set_battery_level(battery_level);
 }
 
+static void configure_kbd(){
+	// TODO: Configure matrix keyboard
+}
+
 
 int main(void)
 {
@@ -939,6 +873,8 @@ int main(void)
 	printk("Starting Bluetooth Peripheral HIDS keyboard example\n");
 
 	configure_gpio();
+
+	configure_kbd();
 
 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
 	if (err) {
