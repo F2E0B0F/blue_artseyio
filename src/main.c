@@ -4,167 +4,7 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-#include <zephyr/types.h>
-#include <stddef.h>
-#include <string.h>
-#include <errno.h>
-#include <zephyr/sys/printk.h>
-#include <zephyr/sys/byteorder.h>
-#include <zephyr/kernel.h>
-#include <zephyr/drivers/gpio.h>
-#include <soc.h>
-#include <assert.h>
-#include <zephyr/spinlock.h>
-
-#include <zephyr/settings/settings.h>
-
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/hci.h>
-#include <zephyr/bluetooth/conn.h>
-#include <zephyr/bluetooth/uuid.h>
-#include <zephyr/bluetooth/gatt.h>
-
-#include <zephyr/bluetooth/services/bas.h>
-#include <bluetooth/services/hids.h>
-#include <zephyr/bluetooth/services/dis.h>
-#include <dk_buttons_and_leds.h>
-
-#include <zephyr/input/input_kbd_matrix.h>
-
-#define DEVICE_NAME     CONFIG_BT_DEVICE_NAME
-#define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
-
-#define BASE_USB_HID_SPEC_VERSION   0x0101
-
-#define OUTPUT_REPORT_MAX_LEN            1
-#define OUTPUT_REPORT_BIT_MASK_CAPS_LOCK 0x02
-#define INPUT_REP_KEYS_REF_ID            0
-#define OUTPUT_REP_KEYS_REF_ID           0
-#define MODIFIER_KEY_POS                 0
-#define SHIFT_KEY_CODE                   0x02
-#define SCAN_CODE_POS                    2
-#define KEYS_MAX_LEN                    (INPUT_REPORT_KEYS_MAX_LEN - \
-					SCAN_CODE_POS)
-
-#define ADV_LED_BLINK_INTERVAL  1000
-
-#define ADV_STATUS_LED DK_LED1
-#define CON_STATUS_LED DK_LED2
-#define LED_CAPS_LOCK  DK_LED3
-#define NFC_LED	       DK_LED4
-#define KEY_TEXT_MASK  DK_BTN1_MSK
-#define KEY_SHIFT_MASK DK_BTN2_MSK
-#define KEY_ADV_MASK   DK_BTN4_MSK
-
-/* Key used to accept or reject passkey value */
-#define KEY_PAIRING_ACCEPT DK_BTN1_MSK
-#define KEY_PAIRING_REJECT DK_BTN2_MSK
-
-/* HIDs queue elements. */
-#define HIDS_QUEUE_SIZE 10
-
-/* ********************* */
-/* Buttons configuration */
-
-/* Note: The configuration below is the same as BOOT mode configuration
- * This simplifies the code as the BOOT mode is the same as REPORT mode.
- * Changing this configuration would require separate implementation of
- * BOOT mode report generation.
- */
-#define KEY_CTRL_CODE_MIN 224 /* Control key codes - required 8 of them */
-#define KEY_CTRL_CODE_MAX 231 /* Control key codes - required 8 of them */
-#define KEY_CODE_MIN      0   /* Normal key codes */
-#define KEY_CODE_MAX      101 /* Normal key codes */
-#define KEY_PRESS_MAX     6   /* Maximum number of non-control keys
-			       * pressed simultaneously
-			       */
-
-/* Number of bytes in key report
- *
- * 1B - control keys
- * 1B - reserved
- * rest - non-control keys
- */
-#define INPUT_REPORT_KEYS_MAX_LEN (1 + 1 + KEY_PRESS_MAX)
-
-/* Current report map construction requires exactly 8 buttons */
-BUILD_ASSERT((KEY_CTRL_CODE_MAX - KEY_CTRL_CODE_MIN) + 1 == 8);
-
-/* OUT report internal indexes.
- *
- * This is a position in internal report table and is not related to
- * report ID.
- */
-enum {
-	OUTPUT_REP_KEYS_IDX = 0
-};
-
-/* INPUT report internal indexes.
- *
- * This is a position in internal report table and is not related to
- * report ID.
- */
-enum {
-	INPUT_REP_KEYS_IDX = 0
-};
-
-/* HIDS instance. */
-BT_HIDS_DEF(hids_obj,
-	    OUTPUT_REPORT_MAX_LEN,
-	    INPUT_REPORT_KEYS_MAX_LEN);
-
-static volatile bool is_adv;
-
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_GAP_APPEARANCE,
-		      (CONFIG_BT_DEVICE_APPEARANCE >> 0) & 0xff,
-		      (CONFIG_BT_DEVICE_APPEARANCE >> 8) & 0xff),
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HIDS_VAL),
-					  BT_UUID_16_ENCODE(BT_UUID_BAS_VAL)),
-};
-
-static const struct bt_data sd[] = {
-	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN),
-};
-
-static struct conn_mode {
-	struct bt_conn *conn;
-	bool in_boot_mode;
-} conn_mode[CONFIG_BT_HIDS_MAX_CLIENT_COUNT];
-
-static const uint8_t hello_world_str[] = {
-	0x0b,	/* Key h */
-	0x08,	/* Key e */
-	0x0f,	/* Key l */
-	0x0f,	/* Key l */
-	0x12,	/* Key o */
-	0x28,	/* Key Return */
-};
-
-static const uint8_t shift_key[] = { 225 };
-
-/* Current report status
- */
-static struct keyboard_state {
-	uint8_t ctrl_keys_state; /* Current keys state */
-	uint8_t keys_state[KEY_PRESS_MAX];
-} hid_keyboard_state;
-
-#if CONFIG_NFC_OOB_PAIRING
-static struct k_work adv_work;
-#endif
-
-static struct k_work pairing_work;
-struct pairing_data_mitm {
-	struct bt_conn *conn;
-	unsigned int passkey;
-};
-
-K_MSGQ_DEFINE(mitm_queue,
-	      sizeof(struct pairing_data_mitm),
-	      CONFIG_BT_HIDS_MAX_CLIENT_COUNT,
-	      4);
+#include "main.h"
 
 static void advertising_start(void)
 {
@@ -703,7 +543,9 @@ static int hid_buttons_press(const uint8_t *keys, size_t cnt)
 	while (cnt--) {
 		int err;
 
-		err = hid_kbd_state_key_set(*keys++);
+		err = hid_kbd_state_key_set(*keys);
+		keys++;
+
 		if (err) {
 			printk("Cannot set selected key.\n");
 			return err;
@@ -793,10 +635,7 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 {
 	static bool pairing_button_pressed;
 
-	uint32_t buttons = (~button_state) & has_changed;
-
-	printk("buttons: 0x%x\r\n", button_state);
-	printk("changed: 0x%x\r\n", has_changed);
+	uint32_t buttons = button_state & has_changed;
 
 	if (k_msgq_num_used_get(&mitm_queue)) {
 		if (buttons & KEY_PAIRING_ACCEPT) {
@@ -823,6 +662,8 @@ static void button_changed(uint32_t button_state, uint32_t has_changed)
 	}
 
 	if (has_changed & KEY_TEXT_MASK) {
+		// Pressed  -> true
+		// Released -> false
 		button_text_changed((button_state & KEY_TEXT_MASK) != 0);
 	}
 	if (has_changed & KEY_SHIFT_MASK) {
