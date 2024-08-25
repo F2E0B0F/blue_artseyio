@@ -122,16 +122,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	if (!is_any_dev_connected) {
 		dk_set_led_off(CON_STATUS_LED);
 	}
-
-#if CONFIG_NFC_OOB_PAIRING
-	if (is_adv) {
-		printk("Advertising stopped after disconnect\n");
-		bt_le_adv_stop();
-		is_adv = false;
-	}
-#else
 	advertising_start();
-#endif
 }
 
 
@@ -743,12 +734,7 @@ int main(void)
 		settings_load();
 	}
 
-#if CONFIG_NFC_OOB_PAIRING
-	k_work_init(&adv_work, delayed_advertising_start);
-	app_nfc_init();
-#else
 	advertising_start();
-#endif
 
 	k_work_init(&pairing_work, pairing_process);
 
